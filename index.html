@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Screen-OCR &amp; Translate</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f2f5;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 800px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    #player {
+      width: 100%;
+      height: 450px;
+    }
+    .controls {
+      padding: 20px;
+    }
+    .controls button, .controls select {
+      margin: 0 5px 10px 0;
+      padding: 10px 15px;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .controls button {
+      background: #4285f4;
+      color: #fff;
+      border: none;
+    }
+    .controls button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #result {
+      margin-top: 15px;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      min-height: 100px;
+      white-space: pre-wrap;
+    }
+    #status {
+      font-size: 0.9rem;
+      color: #666;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- YouTube Player -->
+    <div id="player"></div>
+
+    <!-- Translation Controls -->
+    <div class="controls">
+      <div id="status">Status: Ready</div>
+      <button id="btnStart">Start Screen Capture</button>
+      <button id="btnStop" disabled>Stop Capture</button>
+      <button id="btnOCR" disabled>Recognize &amp; Translate</button>
+      <select id="langSelect">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+      </select>
+      <div id="result">OCR + translation will appear here.</div>
+    </div>
+  </div>
+
+  <!-- External Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.0.2/tesseract.min.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <script>
+    // === YouTube IFrame API ===
+    let player;
+    function onYouTubeIframeAPIReady() {
+      player = new YT.Player('player', {
+        height: '450',
+        width: '100%',
+        videoId: 'Jgpia5xzNiI',  // ← replace with your video ID
+        events: { 'onReady': () => player.playVideo() }
+      });
+    }
+
+    // === Screen Capture & OCR ===
+    let mediaStream = null;
+    const btnStart = document.getElementById('btnStart');
+    const btnStop  = document.getElementById('btnStop');
+    const btnOCR   = document.getElementById('btnOCR');
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result');
+    const langSelect = document.getElementById('langSelect');
+
+    btnStart.addEventListener('click', async () => {
+      try {
+        mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        statusEl.textContent = 'Status: Capture started – select the tab with the video.';
+        btnStart.disabled = true;
+        btnStop.disabled  = false;
+        btnOCR.disabled   = false;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = `Status: Capture failed (${err.name})`;
+        alert(`Screen sharing failed: ${err.name}\n${err.message}`);
+      }
+    });
+
+    btnStop.addEventListener('click', () => {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+      statusEl.textContent = 'Status: Capture stopped.';
+      btnStart.disabled = false;
+      btnStop.disabled  = true;
+      btnOCR.disabled   = true;
+    });
+
+    btnOCR.addEventListener('click', async () => {
+      if (!mediaStream) {
+        alert('Please start screen capture first.');
+        return;
+      }
+      statusEl.textContent = 'Status: Grabbing frame & performing OCR…';
+      try {
+        const [track] = mediaStream.getVideoTracks();
+        const ic = new ImageCapture(track);
+        const frame = await ic.grabFrame();
+        // draw to canvas
+        const canvas = document.createElement('canvas');
+        canvas.width  = frame.width;
+        canvas.height = frame.height;
+        canvas.getContext('2d').drawImage(frame, 0, 0);
+
+        // OCR via Tesseract.js
+        const worker = Tesseract.createWorker({
+          logger: m => console.log(m)
+        });
+        await worker.load();
+        await worker.loadLanguage('chi_sim');
+        await worker.initialize('chi_sim');
+        const { data: { text } } = await worker.recognize(canvas);
+        await worker.terminate();
+
+        statusEl.textContent = 'Status: OCR done! Translating…';
+        await translateText(text.trim() || '[no text detected]');
+
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Status: OCR failed.';
+        alert('Error during OCR: ' + (err.message || err));
+      }
+    });
+
+    // === Translation via MyMemory ===
+    async function translateText(srcText) {
+      const target = langSelect.value;
+      try {
+        const res = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(srcText)}&langpair=zh|${target}`
+        );
+        const json = await res.json();
+        resultEl.innerHTML = 
+          `<strong>Original (zh):</strong><br>${srcText}<br><br>` +
+          `<strong>Translation (${target}):</strong><br>${json.responseData.translatedText}`;
+        statusEl.textContent = 'Status: Translation complete.';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Status: Translation failed.';
+        alert('Translation service error.');
+      }
+    }
+  </script>
+</body>
+  </html>
+          
